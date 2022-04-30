@@ -81,6 +81,8 @@ https://docs.cilium.io/en/v1.8/bpf/
 
 [xdp实现简单udp nat. 类型 BPF_PROG_TYPE_XDP](network/xdp)
 
+[xdp实现的udp原路回包 类型 BPF_PROG_TYPE_XDP](network/xdp)
+
 [sock addr实现简单tcp nat. 类型 BPF_PROG_TYPE_CGROUP_SOCK_ADDR](network/cgroup_sock_addr)
 
 TODO 更多类型

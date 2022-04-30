@@ -103,12 +103,7 @@ int divert(struct xdp_md *ctx){
         udp->dest=htons(to_dport);
         //关闭udp校验和校验
         udp->check=0;
-        bpf_trace_printk("sport %d to ip:%d port %d",sport,*(unsigned int*)to_daddr,to_dport);
-      
-        //redirect 本地测试的结果是只能重定向到lo 重定向到其他网卡 抓包时抓不到 即使redir到lo 监听127.0.0.1和对应端口也不能接受到数据 目前还不知道原因. 
-        //int redir = dev.redirect_map(0,0);
-        //bpf_trace_printk("redir return %d",redir);
-        //return redir;      
+        bpf_trace_printk("sport %d to ip:%d port %d",sport,*(unsigned int*)to_daddr,to_dport);    
     }
 
     return XDP_PASS;
@@ -123,4 +118,6 @@ b.attach_xdp(in_dev, b.load_func("divert", b.XDP))
 try:
     b.trace_print()
 except Exception:
+    pass
+finally:
     b.remove_xdp(in_dev)
