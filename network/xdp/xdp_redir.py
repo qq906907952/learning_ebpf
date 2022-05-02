@@ -2,18 +2,16 @@ from bcc import BPF
 import ctypes as ct
 
 in_dev = "eth0"
+out_dev_idx = 10  # ip link 对应的idx
 
-text = '''
-/*
-效果类似 iptables -t nat -A PREROUTING -p udp --sport 53 -j DNAT --to-destination 127.0.0.1:1234
-*/  
-
+text='''
 #include<uapi/linux/tcp.h>
 #include<uapi/linux/ip.h>
 #include<uapi/linux/in.h>
 #include<uapi/linux/if_ether.h>
 #include<uapi/linux/udp.h>
 
+BPF_DEVMAP(dev,10);
 
 static void __add_csum_16(unsigned short *csum,unsigned short add){
     int res = *csum + add;
@@ -34,28 +32,31 @@ static __sum16 new_sum_16(void *__from, void *__to, u32 size,__sum16 __old_sum )
    return ~__new_sum;
 }
 
-static void cal_ip_csum(struct iphdr * ip){
-    ip->check = 0;
-    unsigned char * ip_ptr = (char *)ip;
-    int csum = 0;
-    for (int i=0;i<sizeof(*ip);i+=2){
-        unsigned short t = (ip_ptr[i]<<8) + ip_ptr[i+1];
-        csum+=t;
-    }
-    ip->check = bpf_htons(~(unsigned short)((csum & 0xffff) + (csum >>16)));
+
+static void ip_set_daddr(struct iphdr * ip, unsigned char * daddr){
+    __be32 old_daddr = ip->daddr;
+    __builtin_memcpy(&ip->daddr,daddr,4);
+    ip->check = bpf_htons(new_sum_16(&old_daddr,daddr,4,bpf_ntohs(ip->check)));
+
+} 
+
+static void eth_set_dmac(struct ethhdr *eth,unsigned char * dmac ){
+    __builtin_memcpy(eth->h_dest,dmac,6);
 }
 
-int divert(struct xdp_md *ctx){
+int redirect(struct xdp_md *ctx){
+    //一下是需要修改的4个变量
+    unsigned char to_daddr[4] = {172,17,0,2};
+    unsigned short from_dport = 9999;
+    unsigned short to_dport = 1234;
+    unsigned char to_mac[6] = {0x4a,0x25,0x8e,0xec,0x20,0x7c};
+    
     void * data = (void*)(unsigned long)ctx->data;
     void * data_end = (void*)(unsigned long)ctx->data_end;
     struct ethhdr *eth;
     struct iphdr *ip;
     struct udphdr *udp;
     
-    unsigned short sport = 53;
-    unsigned short to_sport = 12345;
-    unsigned short to_dport = 1234;
-    unsigned char to_daddr[4] = {127,0,0,1};
 
 
     eth=data;
@@ -86,30 +87,26 @@ int divert(struct xdp_md *ctx){
     }
         
         
-    if (bpf_ntohs(udp->source)==sport){
-        //修改ip包数据 
-        __be32 __to_addr = *(__be32 *)to_daddr;
-        //新校验和
-        __sum16 new_csum = new_sum_16(&ip->daddr,to_daddr,4,bpf_ntohs(ip->check));
-        ip->daddr = __to_addr;
-        ip->check = bpf_htons(new_csum);
-        //cal_ip_csum(ip);
+    if (bpf_ntohs(udp->dest)==from_dport){
+        eth_set_dmac(eth,to_mac); //修改目的mac
+        ip_set_daddr(ip,to_daddr); //修改目的ip地址
+        udp->dest = bpf_htons(to_dport); //修改目的端口
+        udp->check = 0; //关闭udp校验和
         
-        //修改udp包数据
-        udp->source=htons(to_sport);
-        udp->dest=htons(to_dport);
-        //关闭udp校验和校验
-        udp->check=0;
-        bpf_trace_printk("sport %d to ip:%d port %d",sport,*(unsigned int*)to_daddr,to_dport);    
+        int redir = dev.redirect_map(0,0);
+        bpf_trace_printk("redir return %d",redir);
+        return redir;      
+         
     }
-
     return XDP_PASS;
 }
 
 '''
 
 b = BPF(text=text)
-b.attach_xdp(in_dev, b.load_func("divert", b.XDP))
+dev = b.get_table("dev")
+dev[0] = ct.c_int(out_dev_idx)
+b.attach_xdp(in_dev, b.load_func("redirect", b.XDP))
 try:
     b.trace_print()
 except Exception as e:

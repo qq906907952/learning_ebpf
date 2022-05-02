@@ -93,7 +93,8 @@ b=BPF(text=text)
 b.attach_xdp(in_dev, b.load_func("return_packet", b.XDP))
 try:
     b.trace_print()
-except Exception:
+except Exception as e:
+    print(e)
     pass
 finally:
     b.remove_xdp(in_dev)
